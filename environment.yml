@@ -1,0 +1,35 @@
+name: policy-analytics
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - ipykernel
+  - numpy
+  - pandas
+  - pyarrow
+  - polars
+  - geopandas
+  - shapely
+  - rtree
+  - fiona
+  - rasterio
+  - rioxarray
+  - xarray
+  - dask
+  - netcdf4
+  - bottleneck
+  - matplotlib
+  - seaborn
+  - scikit-learn
+  - statsmodels
+  - pyproj
+  - tqdm
+  - requests
+  - pyyaml
+  - loguru
+  - geopandas 
+  - requests   
+  - esda
+  - pip:
+      - cdsapi

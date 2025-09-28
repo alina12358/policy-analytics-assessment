@@ -1,0 +1,19 @@
+# data & artifacts
+data_raw/
+data_processed/
+outputs/model_artifacts/
+outputs/logs/
+outputs/**/*.png
+outputs/**/*.pdf
+*.parquet
+*.feather
+*.nc
+*.tif
+*.csv
+*.zip
+
+# env / OS clutter
+.env
+.ipynb_checkpoints/
+__pycache__/
+.DS_Store
