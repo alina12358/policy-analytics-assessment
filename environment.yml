@@ -31,5 +31,8 @@ dependencies:
   - geopandas 
   - requests   
   - esda
+  - rioxarray
+  - regionmask
+  - spreg
   - pip:
       - cdsapi

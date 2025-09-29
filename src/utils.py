@@ -1,14 +1,13 @@
 import os
-from urllib.parse import urlencode
 import pandas as pd
 import matplotlib.pyplot as plt
 
 # download_col_mpios.py
-import os, io, zipfile, re, json, sys
+import os, io, zipfile
 import requests
 import geopandas as gpd
 import pandas as pd
-
+from pathlib import Path
 
 # === Config ===
 OUT_DIR = "data_raw/colombia_mpios"
@@ -48,29 +47,34 @@ def download_mpios_gdf(out_dir="data_raw/colombia_mpios"):
 
 
 
-def make_maps(df_vuln_mpio, df_mal, gdf=None, malaria_col="inc_total_pop"):
-    if gdf is None:
-        gdf = download_mpios_gdf()
+def download_col_departments_ne10() -> gpd.GeoDataFrame:
+    """
+    Download Natural Earth admin-1 (all countries), filter to Colombia, return GeoDataFrame.
+    """
+    url = "https://naciscdn.org/naturalearth/10m/cultural/ne_10m_admin_1_states_provinces.zip"
+    r = requests.get(url, timeout=120)
+    r.raise_for_status()
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    # Find the .shp inside the zip and read with GeoPandas
+    shp_name = [n for n in z.namelist() if n.endswith(".shp")][0]
+    tmp = Path("data_raw/_ne_tmp")
+    tmp.mkdir(exist_ok=True)
+    z.extractall(tmp)
+    gdf = gpd.read_file(tmp / shp_name)
+    # keep only Colombia
+    if "adm0_a3" in gdf.columns:
+        gdf = gdf[gdf["adm0_a3"] == "COL"].copy()
+    elif "admin" in gdf.columns:
+        gdf = gdf[gdf["admin"].str.upper() == "COLOMBIA"].copy()
+    else:
+        raise RuntimeError("Country field not found in Natural Earth layer.")
+    # Use 'name' as department label (exists in NE)
+    if "name" not in gdf.columns:
+        raise RuntimeError("'name' field not found in Natural Earth layer.")
+    return gdf
 
-    merged = (
-        gdf.merge(df_vuln_mpio[["mpio_code", "IV_mpio"]], on="mpio_code")
-           .merge(df_mal, on="mpio_code")
-    )
 
-    value_col = malaria_col
-    per_100k = False
-    if malaria_col.startswith("inc"):
-        value_col = f"{malaria_col}_100k"
-        merged[value_col] = merged[malaria_col] * 100000
-        per_100k = True
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 8))
-    merged.plot(column="IV_mpio", cmap="Reds", legend=True, ax=axes[0], edgecolor="none")
-    axes[0].set_title("Vulnerability Index (IV_mpio)")
-    axes[0].axis("off")
-    merged.plot(column=value_col, cmap="PuBu", legend=True, ax=axes[1], edgecolor="none")
-    axes[1].set_title(f"Malaria {'Incidence per 100,000' if per_100k else 'Counts'} ({malaria_col})")
-    axes[1].axis("off")
-    plt.tight_layout()
-    plt.show()
-    return merged
+def zero_pad_codes(s, width):
+    """Numeric -> string with left zeros (keeps <NA>)."""
+    s = pd.to_numeric(s, errors="coerce").astype("Int64")
+    return s.astype("string").str.zfill(width)

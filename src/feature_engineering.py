@@ -3,12 +3,16 @@ import pandas as pd
 import gc
 import numpy as np
 import matplotlib.pyplot as plt
-
-# --- helpers ---
-def _zero_pad_codes(s, width):
-    """Numeric -> string with left zeros (keeps <NA>)."""
-    s = pd.to_numeric(s, errors="coerce").astype("Int64")
-    return s.astype("string").str.zfill(width)
+import geopandas as gpd
+import importlib
+import warnings
+warnings.filterwarnings('ignore')
+import src.utils 
+importlib.reload(src.utils)
+from src.utils import *
+import src.eval_visuals 
+importlib.reload(src.eval_visuals)
+from src.eval_visuals import *
 
 def census_pop_by_municipality(
     persons_csv="data_raw/cnper2018.csv",
@@ -66,6 +70,7 @@ def malaria_weekly_indicators(
     Assumes malaria CSV has: ano, semana, cod_dpto_o, cod_mun_o, departamento_ocurrencia,
                               municipio_ocurrencia, nombre_evento, conteo
     """
+    print('Constructing output variables, relative malaria cases... ')
     # population
     pop = census_pop_by_municipality(persons_csv)
 
@@ -88,7 +93,7 @@ def malaria_weekly_indicators(
             [m["ano"] <= int(year_to)]
 
     m["conteo"] = pd.to_numeric(m["conteo"], errors="coerce").fillna(0).astype(int)
-    m["mpio_code"] = _zero_pad_codes(m["cod_mun_o"], 5)
+    m["mpio_code"] = zero_pad_codes(m["cod_mun_o"], 5)
 
     ev = m["nombre_evento"].astype("string").str.upper()
     m["_is_comp"]  = ev.str.contains("COMPLICAD", na=False)
@@ -128,43 +133,78 @@ def malaria_weekly_indicators(
         "departamento_ocurrencia":"department",
         "municipio_ocurrencia":"municipality"
     }).sort_values(["ano","semana","department","municipality"]).reset_index(drop=True)
+    df_week = out.copy()
+    df_week.to_csv('data_processed/output_weekly_mpio.csv',index=False)
+    # Plot: incidence per 100k, auto-pick top 8 municipalities by cases
+    ax, wide = plot_weekly_lines(df_week, metric="inc_total_pop", per=100000, top_k=8,
+                                     title="Malaria incidence per 100k (weekly)")
+
     return out
 
-
-# --- 3) Quick lineplot ---
-def plot_weekly_lines(
-    df, metric="inc_total_pop", per=100000, top_k=10, figsize=(11,6), title=None
-):
-    """
-    Plots top_k municipalities by total cases for the chosen weekly metric.
-    """
-    data = df.copy()
-    data["week_key"] = data["ano"].astype(int).astype(str) + "-" + data["semana"].astype(int).astype(str).str.zfill(2)
-    data["metric_disp"] = data[metric] * (per if per else 1.0)
-
-    top = (data.groupby("mpio_code")["cases_total"].sum().sort_values(ascending=False).head(top_k).index)
-    sub = data[data["mpio_code"].isin(top)].copy()
-    sub["label"] = sub["department"].str.title() + " - " + sub["municipality"].str.title()
-
-    wide = sub.pivot_table(index="week_key", columns="label", values="metric_disp", aggfunc="sum").sort_index()
-
-    ax = wide.plot(figsize=figsize)
-    ax.set_xlabel("Year-Week")
-    ax.set_ylabel(f"{metric} (per {per:,})" if per else metric)
-    ax.set_title(title or f"Weekly {metric}")
-    plt.tight_layout()
-    return ax, wide
-
-
-from pathlib import Path
-from collections import defaultdict
-import unicodedata as ud
 import pandas as pd
-import matplotlib.pyplot as plt
 
-from pathlib import Path
-import pandas as pd
-import unicodedata as ud
+def build_malaria_features_total(df_week: pd.DataFrame) -> pd.DataFrame:
+    """
+    -------------------------------------------------------------------------
+    Name: build_malaria_features_total
+    Purpose:
+        Aggregate malaria cases (2017–2022) by municipality and compute
+        cumulative incidences using a fixed population (2018). Returns a
+        DataFrame ready for feature engineering/modeling at municipal level.
+
+    Inputs:
+        df_week : pd.DataFrame
+            Weekly data with columns:
+            - 'mpio_code', 'municipality'
+            - 'cases_total', 'cases_complicated', 'cases_vivax', 'cases_falciparum'
+            - 'pop_total' (fixed population per municipality; first value is used)
+
+    Outputs:
+        pd.DataFrame with columns:
+            ['mpio_code', 'municipality',
+             'cases_total','cases_complicated','cases_vivax','cases_falciparum',
+             'inc_total_pop','inc_comp_pop','inc_vivax_pop','inc_falci_pop']
+
+    Notes:
+        - Incidences are per 100,000 inhabitants.
+        - Population is taken as fixed per municipality (first observed value).
+    -------------------------------------------------------------------------
+    """
+    print('Constructing output variables, total malaria cases... ')
+    case_cols_base = ["cases_total", "cases_complicated", "cases_vivax", "cases_falciparum"]
+
+    # 1) Aggregate total cases (2017–2022) by municipality
+    cases_sum = (
+        df_week.groupby(["mpio_code", "municipality"], as_index=False)[case_cols_base]
+               .sum()
+    )
+
+    # 2) Fixed population per municipality (2018): take the first observed value
+    pop_by_mpio = (
+        df_week.groupby("mpio_code")["pop_total"]
+               .first()
+               .reset_index()
+    )
+
+    # 3) Join and compute cumulative incidences (per 100,000)
+    out = cases_sum.merge(pop_by_mpio, on="mpio_code", how="left")
+
+    out["inc_total_pop"] = (out["cases_total"]       / out["pop_total"]) * 100000
+    out["inc_comp_pop"]  = (out["cases_complicated"] / out["pop_total"]) * 100000
+    out["inc_vivax_pop"] = (out["cases_vivax"]       / out["pop_total"]) * 100000
+    out["inc_falci_pop"] = (out["cases_falciparum"]  / out["pop_total"]) * 100000
+
+    # 4) Final tidy frame
+    cols_keep = (
+        ["mpio_code", "municipality"] +
+        case_cols_base +
+        ["inc_total_pop","inc_comp_pop","inc_vivax_pop","inc_falci_pop"]
+    )
+    df_malaria_total = out[cols_keep].copy()
+    df_malaria_total.to_csv('data_processed/malaria_total_mpio.csv',index=False)
+    return df_malaria_total
+
+
 
 def agg_malaria_by_department(
     csv_path="data_raw/malaria_agg.csv",
@@ -236,81 +276,172 @@ def plot_top_departments(df: pd.DataFrame, top=12, figsize=(9,5), title=None):
     return ax
 
 
-import io, zipfile, requests, unicodedata as ud
-from pathlib import Path
-import pandas as pd
-import geopandas as gpd
-import matplotlib.pyplot as plt
-
-def _norm_name(x: str) -> str:
-    """Uppercase, strip accents/punct/spaces for robust joins."""
-    if x is None:
-        return ""
-    x = str(x).strip().upper()
-    x = "".join(c for c in ud.normalize("NFKD", x) if not ud.combining(c))
-    x = x.replace(".", " ").replace("-", " ")
-    x = " ".join(x.split())
-    return x
-
-def download_col_departments_ne10() -> gpd.GeoDataFrame:
+def build_vulnerability_index(df_malaria_total: pd.DataFrame, personas_csv: str = "data_raw/cnper2018.csv",
+                                hogares_csv: str = "data_raw/cnhog2018.csv",) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series]:
     """
-    Download Natural Earth admin-1 (all countries), filter to Colombia, return GeoDataFrame.
+    -------------------------------------------------------------------------
+    Name: build_vulnerability_index
+    Purpose:
+        Construct household/person vulnerability flags, aggregate to municipality,
+        compute correlation-informed weights versus malaria indicators, and build
+        a weighted municipal vulnerability index (IV_mpio).
+
+    Inputs:
+        df_personas : pd.DataFrame
+            Person-level microdata with at least:
+            ['COD_ENCUESTAS','P_ALFABETA','P_NIVEL_ANOSR','P_EDADR','P_TRABAJO',
+             'PA1_CALIDAD_SERV','U_DPTO','U_MPIO']
+        df_hogares  : pd.DataFrame
+            Household-level microdata with at least:
+            ['COD_ENCUESTAS','H_DONDE_PREPALIM','H_AGUA_COCIN','HA_TOT_PER','H_NRO_DORMIT']
+        df_malaria_total : pd.DataFrame
+            Municipal malaria features with at least:
+            ['mpio_code','inc_total_pop','inc_comp_pop','inc_vivax_pop','inc_falci_pop']
+
+    Outputs:
+        (df_vuln_mpio, corr, weights)
+            df_vuln_mpio: municipal-level vulnerability dataframe with 'mpio_code' and 'IV_mpio'
+            corr: Spearman correlation matrix (vulnerabilities x malaria indicators)
+            weights: pd.Series of normalized weights for vulnerability variables (sum to 1)
+
+    Notes:
+        - Vulnerability flags are binary; municipal aggregation uses means (proportions).
+        - Weights are derived by rescaling the average Spearman correlation with malaria
+          into [0,1] and normalizing to sum to 1.
+    -------------------------------------------------------------------------
     """
-    url = "https://naciscdn.org/naturalearth/10m/cultural/ne_10m_admin_1_states_provinces.zip"
-    r = requests.get(url, timeout=120)
-    r.raise_for_status()
-    z = zipfile.ZipFile(io.BytesIO(r.content))
-    # Find the .shp inside the zip and read with GeoPandas
-    shp_name = [n for n in z.namelist() if n.endswith(".shp")][0]
-    tmp = Path("data_raw/_ne_tmp")
-    tmp.mkdir(exist_ok=True)
-    z.extractall(tmp)
-    gdf = gpd.read_file(tmp / shp_name)
-    # keep only Colombia
-    if "adm0_a3" in gdf.columns:
-        gdf = gdf[gdf["adm0_a3"] == "COL"].copy()
-    elif "admin" in gdf.columns:
-        gdf = gdf[gdf["admin"].str.upper() == "COLOMBIA"].copy()
-    else:
-        raise RuntimeError("Country field not found in Natural Earth layer.")
-    # Use 'name' as department label (exists in NE)
-    if "name" not in gdf.columns:
-        raise RuntimeError("'name' field not found in Natural Earth layer.")
-    gdf["dept_norm"] = gdf["name"].apply(_norm_name)
+    df_personas = pd.read_csv(personas_csv)
+    df_hogares  = pd.read_csv(hogares_csv)
+
+    df_personas["v_analfabeta"]   = (df_personas["P_ALFABETA"] == 2).astype(int)
+    df_personas["v_bajo_nivel"]   = df_personas["P_NIVEL_ANOSR"].isin([1, 2, 10]).astype(int)
+    df_personas["v_edad_riesgo"]  = df_personas["P_EDADR"].isin([1, 13, 14, 15, 16, 17, 18, 19, 20, 21]).astype(int)
+    df_personas["v_trabajo"]      = df_personas["P_TRABAJO"].isin([4, 5, 7, 8, 9]).astype(int)
+    df_personas["v_calidad_salud"]= df_personas["PA1_CALIDAD_SERV"].isin([3, 4]).astype(int)
+
+    df_hogares["v_cocina"]        = df_hogares["H_DONDE_PREPALIM"].isin([5, 6]).astype(int)
+    df_hogares["v_agua"]          = (~df_hogares["H_AGUA_COCIN"].isin([1, 2, 11])).astype(int)
+    df_hogares["v_hacinamiento"]  = (df_hogares["HA_TOT_PER"] / df_hogares["H_NRO_DORMIT"] > 3).astype(int)
+
+    df_vuln = df_personas.merge(
+        df_hogares[["COD_ENCUESTAS", "v_cocina", "v_agua", "v_hacinamiento"]],
+        on="COD_ENCUESTAS",
+        how="left"
+    )
+
+    vuln_vars = [
+        "v_analfabeta", "v_bajo_nivel", "v_edad_riesgo",
+        "v_trabajo", "v_calidad_salud", "v_cocina", "v_agua", "v_hacinamiento"
+    ]
+
+    df_vuln_mpio = df_vuln.groupby(["U_DPTO", "U_MPIO"])[vuln_vars].mean().reset_index()
+    df_vuln_mpio["mpio_code"] = (
+        df_vuln_mpio["U_DPTO"].astype(str).str.zfill(2) +
+        df_vuln_mpio["U_MPIO"].astype(str).str.zfill(3)
+    )
+
+    df_merged = df_malaria_total.merge(df_vuln_mpio, on="mpio_code", how="inner")
+    malaria_vars = ["inc_total_pop", "inc_comp_pop", "inc_vivax_pop", "inc_falci_pop"]
+
+    corr = df_merged[vuln_vars + malaria_vars].corr(method="spearman").loc[vuln_vars, malaria_vars]
+    weights_rescale = (corr.mean(axis=1) + 1) / 2
+    weights_rescale = weights_rescale / weights_rescale.sum()
+
+    w = weights_rescale.reindex(vuln_vars).fillna(0).astype(float)
+    w_sum = w.sum()
+    if w_sum <= 0:
+        raise ValueError("Weights sum to 0. Check the correlations and input data.")
+    w = w / w_sum
+
+    df_vuln_mpio = df_vuln_mpio.copy()
+    df_vuln_mpio["IV_mpio"] = (df_vuln_mpio[vuln_vars] * w.values).sum(axis=1)
+    df_vuln_mpio.to_csv('data_processed/vuln_index_mpio.csv',index=False)
+    plot_heatmap(corr)
+    return df_vuln_mpio
+
+
+def attach_climate_to_gdf(
+    gdf_map: gpd.GeoDataFrame,
+    chirps_path: str = "data_processed/climate_chirps_weekly_p05_2017_2022_long.csv",
+    terra_path:  str = "data_processed/climate_terraclimate_monthly_mpio.csv",
+) -> gpd.GeoDataFrame:
+    """
+    -------------------------------------------------------------------------
+    Name: attach_climate_to_gdf
+    Purpose:
+        Read climate datasets (CHIRPS weekly precip; TerraClimate monthly temp),
+        aggregate to municipality, convert temperature from °F to °C, and merge
+        both climate feature sets into gdf_map by 'mpio_code'.
+
+    Inputs:
+        gdf_map : GeoDataFrame with 'mpio_code'
+        chirps_path : CSV path for CHIRPS weekly long data
+            Required cols: ['mpio_code','precip', ...]
+        terra_path  : CSV path for TerraClimate monthly wide data
+            Required cols: ['date', <five-digit municipal columns>]
+
+    Outputs:
+        GeoDataFrame with added columns:
+            - precip_mean, precip_sum, precip_std
+            - tmean_mean_c, tmean_std_c   (temperature in °C)
+    -------------------------------------------------------------------------
+    """
+    gdf = gdf_map.copy()
+    gdf["mpio_code"] = gdf["mpio_code"].astype(str).str.zfill(5)
+
+    # --- CHIRPS: precip aggregation ---
+    df_chirps = pd.read_csv(chirps_path)
+    df_chirps["mpio_code"] = (
+        df_chirps["mpio_code"].astype(float).astype(int).astype(str).str.zfill(5)
+    )
+    df_chirps_agg = (
+        df_chirps.groupby("mpio_code")["precip_week_mm"]
+        .agg(precip_mean="mean", precip_sum="sum", precip_std="std")
+        .reset_index()
+    )
+
+    # --- TerraClimate: tmean wide -> long -> aggregate (to Celsius) ---
+    df_terra = pd.read_csv(terra_path)
+    id_cols = ["date"]
+    df_terra_long = df_terra.melt(
+        id_vars=id_cols, var_name="mpio_code", value_name="tmean_f"
+    )
+    df_terra_long["mpio_code"] = df_terra_long["mpio_code"].astype(str).str.zfill(5)
+    df_terra_long["tmean_c"] = (df_terra_long["tmean_f"] - 32) * (5 / 9)
+
+    df_temp = (
+        df_terra_long.groupby("mpio_code")["tmean_c"]
+        .agg(tmean_mean_c="mean", tmean_std_c="std")
+        .reset_index()
+    )
+
+    # --- Merge both climate tables into gdf_map ---
+    gdf = gdf.merge(df_chirps_agg, on="mpio_code", how="left")
+    gdf = gdf.merge(df_temp,      on="mpio_code", how="left")
+
     return gdf
 
-def plot_malaria_map_departments(df_dep: pd.DataFrame, title="Malaria cases by department"):
-    """
-    Merge aggregated department cases with Colombia admin-1 polygons and plot a choropleth.
-    df_dep must have columns: ['department','cases'] (and optionally 'share').
-    """
-    # Prepare agg dataframe
-    df = df_dep.copy()
-    if "department" not in df.columns or "cases" not in df.columns:
-        raise ValueError("df_dep must have columns: 'department' and 'cases'")
-    df["dept_norm"] = df["department"].apply(_norm_name)
+def make_maps(df_vuln_mpio, df_mal, gdf=None):
+    if gdf is None:
+        gdf = download_mpios_gdf()
 
-    # Manual name fixes for tricky ones
-    # (Natural Earth uses 'DISTRITO CAPITAL DE BOGOTA' and 'SAN ANDRES PROVIDENCIA Y SANTA CATALINA')
-    fixes = {
-        "BOGOTA DC": "DISTRITO CAPITAL DE BOGOTA",
-        "ARCHIPIELAGO DE SAN ANDRES PROVIDENCIA Y SANTA CATALINA": "SAN ANDRES PROVIDENCIA Y SANTA CATALINA",
-        "SAN ANDRES PROVIDENCIA Y SANTA CATALINA": "SAN ANDRES PROVIDENCIA Y SANTA CATALINA",
-    }
-    df["dept_norm"] = df["dept_norm"].replace(fixes)
+    merged = (
+        gdf.merge(df_vuln_mpio[["mpio_code", "IV_mpio"]], on="mpio_code")
+           .merge(df_mal, on="mpio_code")
+    )
 
-    # Get polygons and merge
-    gdf = download_col_departments_ne10()
-    merged = gdf.merge(df[["dept_norm","cases"]], on="dept_norm", how="left")
-    merged["cases"] = merged["cases"].fillna(0)
+    ind_cols = ["IV_mpio", 'precip_mean', 'precip_sum', 'tmean_mean_c']
+    malaria_cols = ['inc_total_pop','inc_comp_pop', 'inc_vivax_pop', 'inc_falci_pop']
+    dic_titles = {"IV_mpio": "Vulnerability Index (IV_mpio)", 'precip_mean': 'Precipitation mean', 'precip_sum': 'Precipitation sum', 'tmean_mean_c': 'Temperature mean (°C)'}
 
-    # Plot
-    ax = merged.plot(column="cases", legend=True, figsize=(8, 9))
-    ax.set_title(title)
-    ax.axis("off")
+    gdf_map = attach_climate_to_gdf(merged)
+    
+    for ind_col, malaria_col in zip(ind_cols, malaria_cols):
+        per_100k = False
+        if malaria_col.startswith("inc"):
+            value_col = f"{malaria_col}_100k"
+            gdf_map[value_col] = gdf_map[malaria_col] * 100000
+            per_100k = True
+        plot_outvar_maps(gdf_map, per_100k, ind_col, malaria_col, value_col, dic_titles[ind_col])
 
-    # Annotate top few
-    top = df.sort_values("cases", ascending=False).head(5)
-    print("Top 5 departments by cases:")
-    print(top[["department","cases"]].to_string(index=False))
-    return ax, merged
+    return gdf_map
