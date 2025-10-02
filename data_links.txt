@@ -1,0 +1,17 @@
+CNPV 2018 (DANE) — endpoint por ID (cat. 643): https://microdatos.dane.gov.co/index.php/catalog/643/download/
+<ID>
+CNPV 2018 (DANE) — Antioquia (ID 12143): https://microdatos.dane.gov.co/index.php/catalog/643/download/12143
+
+CNPV 2018 (DANE) — Córdoba (ID 12152): https://microdatos.dane.gov.co/index.php/catalog/643/download/12152
+
+CNPV 2018 (DANE) — Chocó (ID 12154): https://microdatos.dane.gov.co/index.php/catalog/643/download/12154
+
+CNPV 2018 (DANE) — Nariño (ID 12159): https://microdatos.dane.gov.co/index.php/catalog/643/download/12159
+
+CNPV 2018 (DANE) — Cauca (ID 12166): https://microdatos.dane.gov.co/index.php/catalog/643/download/12166
+
+Malaria agregada (datos.gov.co, Socrata CSV): https://www.datos.gov.co/resource/4hyg-wa9d.csv
+
+CHIRPS 2.0 daily NetCDF p05 — base: https://data.chc.ucsb.edu/products/CHIRPS-2.0/global_daily/netcdf/p05
+
+TerraClimate — portal de datos: https://climate.northwestknowledge.net/TERRACLIMATE-DATA

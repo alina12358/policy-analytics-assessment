@@ -705,6 +705,5 @@ def download_climate_(download_chirps: bool = True, download_terraclimate: bool 
         )
     print("[3/3] Done.")
 
-import re
 
 
