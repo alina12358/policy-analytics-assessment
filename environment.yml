@@ -34,5 +34,6 @@ dependencies:
   - rioxarray
   - regionmask
   - spreg
+  - linearmodels
   - pip:
       - cdsapi

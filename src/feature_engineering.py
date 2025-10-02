@@ -66,7 +66,7 @@ def malaria_weekly_indicators(
     year_from=None, year_to=None,
 ) -> pd.DataFrame:
     """
-    Aggregates weekly malaria counts and computes indicators per total pop and ages 0–4.
+    Aggregates weekly malaria counts and computes indicators per total population.
     Assumes malaria CSV has: ano, semana, cod_dpto_o, cod_mun_o, departamento_ocurrencia,
                               municipio_ocurrencia, nombre_evento, conteo
     """
@@ -422,6 +422,39 @@ def attach_climate_to_gdf(
     return gdf
 
 def make_maps(df_vuln_mpio, df_mal, gdf=None):
+    """
+    Produce side-by-side choropleth maps for a vulnerability index and malaria outcomes.
+
+    Workflow
+    --------
+    1) Ensure a municipalities GeoDataFrame is available (download if not provided).
+    2) Join municipal shapes with:
+       - Vulnerability index at municipality level (df_vuln_mpio[['mpio_code','IV_mpio']]).
+       - Malaria outcomes and ancillary climate summaries (df_mal, keyed by 'mpio_code').
+    3) Attach climate attributes needed for mapping (via `attach_climate_to_gdf`).
+    4) For each (indicator, malaria outcome) pair, prepare a value column:
+       - If the malaria column is an incidence rate (name starts with 'inc'),
+         convert to per-100k population for readability.
+       - Otherwise, plot the raw variable.
+    5) Render maps using `plot_outvar_maps` with appropriate titles and scaling.
+
+    Parameters
+    ----------
+    df_vuln_mpio : pd.DataFrame
+        Municipality-level table with columns ['mpio_code', 'IV_mpio'].
+    df_mal : pd.DataFrame
+        Municipality-level table keyed by 'mpio_code' containing malaria outcomes and
+        climate summaries (e.g., 'inc_total_pop', 'precip_mean', 'tmean_mean_c').
+    gdf : geopandas.GeoDataFrame or None
+        Municipal boundary geometries keyed by 'mpio_code'. If None, shapes are
+        retrieved via `download_mpios_gdf()`.
+
+    Returns
+    -------
+    geopandas.GeoDataFrame
+        GeoDataFrame with merged attributes used for mapping (including derived
+        per-100k columns where applicable).
+    """
     if gdf is None:
         gdf = download_mpios_gdf()
 
@@ -445,3 +478,56 @@ def make_maps(df_vuln_mpio, df_mal, gdf=None):
         plot_outvar_maps(gdf_map, per_100k, ind_col, malaria_col, value_col, dic_titles[ind_col])
 
     return gdf_map
+
+
+def build_time_series_df(
+    df_week: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Joins weekly malaria incidence (df_week) with weekly precipitation (CSV) by municipality and week.
+    Converts df_week’s year/week into an ISO week-end (Sunday) date in week_end.
+    Merges with the CSV, which already contains week_end in YYYY-MM-DD format.
+    Returns a modeling-ready DataFrame (weekly spatio-temporal panel).
+    """
+
+    dfw = df_week.copy()
+    climate_csv_path = "data_processed/climate_chirps_weekly_p05_2017_2022_long.csv"
+    incidence_cols = ["inc_total_pop", "inc_comp_pop", "inc_vivax_pop", "inc_falci_pop"]
+
+    dfw = dfw.rename(columns={'ano':'year','semana':'week'})
+
+    dfw["year"] = pd.to_numeric(dfw["year"], errors="coerce").astype("Int64")
+    dfw["week"] = pd.to_numeric(dfw["week"], errors="coerce").astype("Int64")
+
+    dfw = dfw.dropna(subset=["year", "week"]).copy()
+    dfw["week_end"] = pd.to_datetime(
+        dfw["year"].astype(str) + "-W" + dfw["week"].astype(str).str.zfill(2) + "-7",
+        format="%G-W%V-%u",
+        errors="coerce"
+    )
+
+    dfw['mpio_code'] = dfw['mpio_code'].astype(str).str.strip()
+
+    clima = pd.read_csv(climate_csv_path)
+
+    clima["week_end"] = pd.to_datetime(clima["week_end"], errors="coerce", utc=False).dt.tz_localize(None)
+    clima = clima.dropna(subset=["week_end"]).copy()
+    clima['mpio_code'] = pd.to_numeric(clima['mpio_code'], errors='coerce').astype('int').astype(str).str.zfill(5)
+    clima = clima.groupby(["mpio_code", "week_end"], as_index=False)["precip_week_mm"].mean()
+
+    keep_cols = ['mpio_code', "week_end"] + list(incidence_cols)
+    dfw_keep = dfw[keep_cols].copy()
+    merged = dfw_keep.merge(
+        clima[['mpio_code', "week_end", "precip_week_mm"]],
+        on=['mpio_code', "week_end"],
+        how="left",
+        validate="m:1"
+    )
+
+    missing_precip = merged["precip_week_mm"].isna().mean()
+    print(f"[INFO] % non merged rows: {missing_precip:.2%}")
+
+    merged = merged.sort_values(['mpio_code', "week_end"]).reset_index(drop=True)
+
+    merged = merged.dropna().rename(columns={'week_end':'date'}).sort_values('date')
+    return merged
