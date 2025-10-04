@@ -193,7 +193,7 @@ tbl_sig.to_csv("outputs/tables/per_mpio_linear_inc_total_pop_rainywin_SIGONLY.cs
 
 ---
 
-## 11) Policy translation (one paragraph)
+## 11) Policy translation
 
 Results indicate that malaria risk clusters geographically and responds to short-run rainfall within municipalities, with neighboring conditions moderating net effects. This supports cluster-based targeting of surveillance and vector control in persistent HH areas and monitoring of rainfall-driven windows where short lags elevate risk. Cross-border coordination between adjacent municipalities is warranted since spillovers can attenuate or redirect local effects.
 
@@ -206,6 +206,3 @@ Results indicate that malaria risk clusters geographically and responds to short
 
 ---
 
-## 13) Contact
-
-Questions or issues: open an issue in the repo or email **[Your Name]** at **[your.email@domain]**.
